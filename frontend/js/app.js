@@ -48,6 +48,8 @@ createApp({
     const routes = ref([]);
     const carrierJobs = ref([]);
     const thawJobs = ref([]);
+    const trackByBatch = ref({});
+    const trackSummary = ref({});
     const dash = ref({});
 
     const chamberDetail = ref(null);
@@ -122,13 +124,25 @@ createApp({
       probes.value.filter((p) => p.chamber_id === batchForm.value.chamber_id)
     );
     const openableBatches = computed(() =>
-      batches.value.filter((b) => b.status !== "已封批" && b.status !== "草稿")
+      batches.value.filter(
+        (b) =>
+          b.status !== "已封批" &&
+          b.status !== "草稿" &&
+          !(b.state && (b.state.official_sealed || b.state.shadow_sealed))
+      )
     );
     const sealableBatches = computed(() =>
-      batches.value.filter((b) => b.status === "已入库" || b.status === "超温处理中")
+      batches.value.filter(
+        (b) =>
+          (b.status === "已入库" || b.status === "超温处理中") &&
+          !(b.state && b.state.thaw_pending)
+      )
     );
     const sealedBatches = computed(() =>
-      batches.value.filter((b) => b.status === "已封批")
+      batches.value.filter((b) => b.state && b.state.official_sealed)
+    );
+    const shadowBatches = computed(() =>
+      batches.value.filter((b) => b.state && b.state.shadow_sealed)
     );
 
     function fmtTemp(n) {
@@ -137,10 +151,22 @@ createApp({
     }
     function statusClass(s) {
       if (!s) return "frozen";
+      if (s.includes("影子")) return "fail";
       if (s.includes("封批")) return "pass";
       if (s.includes("超温")) return "fail";
-      if (s.includes("草稿")) return "frozen";
+      if (s.includes("空闲") || s.includes("草稿")) return "frozen";
       return "done";
+    }
+    function displayStatus(b) {
+      return b && b.state ? b.state.display_status : b ? b.status : "—";
+    }
+    function trackBadge(b) {
+      if (!b || !b.state) return "";
+      const s = b.state;
+      if (s.shadow_sealed) return "两轨异态：封批表无正式快照";
+      if (s.official_sealed && s.thaw_pending > 0) return "两轨异态：正式封批仍挂解冻待提交";
+      if (!s.consistent) return "两轨异态";
+      return "两轨同态";
     }
     function probeOnlineClass(s) {
       return s === "在线" ? "pass" : "fail";
@@ -192,7 +218,7 @@ createApp({
       if (!token.value) return;
       clearFlash();
       try {
-        const [ch, pr, bt, ex, sl, sp, lg, cal, rt, d, cj, tj] = await Promise.all([
+        const [ch, pr, bt, ex, sl, sp, lg, cal, rt, d, cj, tj, ts] = await Promise.all([
           api.chambers(),
           api.probes(),
           api.batches(),
@@ -205,6 +231,7 @@ createApp({
           api.dashboard(),
           api.carrierJobs(),
           api.thawJobs(),
+          api.trackState(),
         ]);
         chambers.value = ch.items || [];
         probes.value = pr.items || [];
@@ -218,6 +245,10 @@ createApp({
         dash.value = d || {};
         carrierJobs.value = cj.items || [];
         thawJobs.value = tj.items || [];
+        const byBatch = {};
+        for (const s of ts.items || []) byBatch[s.batch_id] = s;
+        trackByBatch.value = byBatch;
+        trackSummary.value = ts.track || {};
 
         if (chambers.value.length && !probeForm.value.chamber_id) {
           probeForm.value.chamber_id = chambers.value[0].id;
@@ -469,6 +500,8 @@ createApp({
       routes,
       carrierJobs,
       thawJobs,
+      trackByBatch,
+      trackSummary,
       dash,
       chamberDetail,
       probeDetail,
@@ -494,6 +527,9 @@ createApp({
       openableBatches,
       sealableBatches,
       sealedBatches,
+      shadowBatches,
+      displayStatus,
+      trackBadge,
       login,
       logout,
       refresh,
@@ -549,7 +585,8 @@ createApp({
         <div class="gauge"><span class="k">探头</span><span class="v">{{ dash.probes || 0 }}</span></div>
         <div class="gauge"><span class="k">在批</span><span class="v">{{ dash.batches || 0 }}</span></div>
         <div class="gauge warn"><span class="k">开放游标</span><span class="v">{{ dash.open_excursions || 0 }}</span></div>
-        <div class="gauge"><span class="k">已封批</span><span class="v">{{ dash.sealed_batches || 0 }}</span></div>
+        <div class="gauge"><span class="k">已封批</span><span class="v">{{ trackSummary.official_sealed || 0 }}</span></div>
+        <div class="gauge warn" v-if="trackSummary.shadow_sealed || trackSummary.inconsistent"><span class="k">两轨异态</span><span class="v">{{ trackSummary.inconsistent || 0 }}</span></div>
       </div>
       <div class="top-meta">
         <span>{{ user }}</span>
@@ -564,6 +601,13 @@ createApp({
       <main class="main">
         <div class="action-err" v-if="actionErr">{{ actionErr }}</div>
         <div class="ok-msg" v-if="actionOk">{{ actionOk }}</div>
+        <div class="track-strip" v-if="trackSummary.consistency_token">
+          五视图同态票 <span class="mono">{{ trackSummary.consistency_token }}</span>
+          · 正式封批 {{ trackSummary.official_sealed || 0 }}
+          · 影子封批 {{ trackSummary.shadow_sealed || 0 }}
+          · 解冻待提交 {{ trackSummary.thaw_pending || 0 }}
+          · <span :class="trackSummary.inconsistent ? 'bad' : 'ok'">{{ trackSummary.inconsistent ? trackSummary.inconsistent + ' 批两轨异态' : '两轨一致' }}</span>
+        </div>
         <div v-show="tab===0">${chambersViewTemplate}</div>
         <div v-show="tab===1">${probesViewTemplate}</div>
         <div v-show="tab===2">${batchesViewTemplate}</div>

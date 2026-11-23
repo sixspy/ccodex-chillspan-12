@@ -5,24 +5,28 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
 from db import connect
+from track_state import batch_track_state, consistency_snapshot
 
 router = APIRouter(tags=["reconcile"])
-
 
 def _chamber_recon(conn, chamber) -> dict:
     cid = chamber["id"]
     quota = int(chamber["quota_batches"])
-    active = conn.execute(
-        """SELECT COUNT(*) c FROM temp_batches
-           WHERE chamber_id=? AND status NOT IN ('已封批','作废')""",
-        (cid,),
-    ).fetchone()["c"]
-    sealed = conn.execute(
-        """SELECT COUNT(*) c FROM temp_batches
-           WHERE chamber_id=? AND status='已封批'""",
-        (cid,),
-    ).fetchone()["c"]
+    batch_rows = conn.execute(
+        "SELECT * FROM temp_batches WHERE chamber_id=?", (cid,)
+    ).fetchall()
+    states = [batch_track_state(conn, row) for row in batch_rows]
+    active = sum(
+        1
+        for row in batch_rows
+        if row["status"] not in ("已封批", "作废")
+    )
+    sealed = sum(1 for s in states if s["official_sealed"])
+    shadow = sum(1 for s in states if s["shadow_sealed"])
+    thaw_pending = sum(1 for s in states if s["thaw_pending"])
+    inconsistent = sum(1 for s in states if not s["consistent"])
     gap = quota - active
+    # 配额平衡只看在批；拆轨一致另列字段，不与配额口径混用。
     ok = active <= quota
     return {
         "chamber_id": cid,
@@ -31,12 +35,16 @@ def _chamber_recon(conn, chamber) -> dict:
         "quota_batches": quota,
         "active_batches": active,
         "sealed_batches": sealed,
+        "shadow_sealed_batches": shadow,
+        "thaw_pending_batches": thaw_pending,
+        "inconsistent_batches": inconsistent,
         "quota_left": gap,
         "balanced": ok,
         "proof": {
             "formula": "active_batches <= quota_batches",
             "left": active,
             "right": quota,
+            "inconsistent": inconsistent,
         },
     }
 
@@ -50,6 +58,7 @@ def reconcile_all(authorization: AuthHeader = None):
         bad = [i for i in items if not i["balanced"]]
         return {
             "items": items,
+            "track": consistency_snapshot(conn, "reconcile"),
             "summary": {
                 "total": len(items),
                 "balanced": len(items) - len(bad),
@@ -90,20 +99,28 @@ def batch_proof(batch_code: str, authorization: AuthHeader = None):
                WHERE batch_id=? AND status='已导出'""",
             (batch["id"],),
         ).fetchone()["c"]
-        sealed = batch["status"] == "已封批"
+        state = batch_track_state(conn, batch)
+        sealed = state["official_sealed"]
         spectrum_ok = (exports >= 1) if sealed else True
         return {
             "batch_code": batch_code,
-            "status": batch["status"],
+            "status": state["display_status"],
+            "raw_status": batch["status"],
             "generation": batch["generation"],
             "open_excursions": open_exc,
             "spectrum_exports": exports,
             "sealed": sealed,
+            "official_seal": state["official_sealed"],
+            "shadow_sealed": state["shadow_sealed"],
+            "thaw_pending": state["thaw_pending"],
+            "consistent": state["consistent"],
             "excursion_closed": open_exc == 0,
             "spectrum_matches_seal": spectrum_ok,
             "proof": {
-                "formula": "sealed => spectrum>=1 and open_excursions==0",
+                "formula": "official_seal => spectrum>=1 and open_excursions==0",
                 "sealed": sealed,
+                "official_seal": state["official_sealed"],
+                "shadow_sealed": state["shadow_sealed"],
                 "open_excursions": open_exc,
                 "exports": exports,
             },

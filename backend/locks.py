@@ -43,6 +43,18 @@ def release(conn, lock_key: str, holder: str) -> None:
     )
 
 
+def acquire_committed(conn, lock_key: str, holder: str) -> bool:
+    """抢锁并立即提交：锁行对并发请求可见，后到者当场争用。"""
+    ok = try_acquire(conn, lock_key, holder)
+    conn.commit()
+    return ok
+
+
+def release_committed(conn, lock_key: str, holder: str) -> None:
+    release(conn, lock_key, holder)
+    conn.commit()
+
+
 def require_lock(conn, lock_key: str, holder: str) -> None:
     if not try_acquire(conn, lock_key, holder):
         raise HTTPException(409, "争用：后到只记争用，不写业务")

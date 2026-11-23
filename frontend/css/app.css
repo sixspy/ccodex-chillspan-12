@@ -332,3 +332,12 @@ input:focus, select:focus, textarea:focus {
   .gauges { justify-content: flex-start; }
   .gauge { min-width: 64px; }
 }
+.track-strip {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+}

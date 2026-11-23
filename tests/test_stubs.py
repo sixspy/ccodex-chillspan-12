@@ -41,7 +41,9 @@ def test_carrier_ingest_stub_no_batch_change():
 def test_thaw_stub_no_status_change():
     c = TestClient(app)
     h = _auth(c)
-    batch = c.get("/api/batches", headers=h).json()["items"][0]
+    batches = c.get("/api/batches", headers=h).json()["items"]
+    # 封批轨批次一律拒收解冻；此处取开放批次验证解冻只登记、不改批次态。
+    batch = next(b for b in batches if b["status"] not in ("已封批",))
     before_status = batch["status"]
     r = c.post(
         "/api/thaw-stub",
@@ -50,5 +52,21 @@ def test_thaw_stub_no_status_change():
     )
     assert r.status_code == 200
     assert r.json()["batch_unchanged"] is True
+    assert r.json()["seal_unchanged"] is True
     after = c.get(f"/api/batches/{batch['id']}", headers=h).json()["batch"]
     assert after["status"] == before_status
+
+
+def test_thaw_stub_rejects_sealed_batch():
+    c = TestClient(app)
+    h = _auth(c)
+    batches = c.get("/api/batches", headers=h).json()["items"]
+    sealed = next(b for b in batches if b["status"] == "已封批")
+    r = c.post(
+        "/api/thaw-stub",
+        headers=h,
+        json={"batch_id": sealed["id"], "thaw_minutes": 10, "mode": "卸货口"},
+    )
+    assert r.status_code == 409
+    after = c.get(f"/api/batches/{sealed['id']}", headers=h).json()["batch"]
+    assert after["status"] == "已封批"

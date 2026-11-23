@@ -9,6 +9,7 @@ from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from locks import release, require_lock
 from models import BatchIn
+from track_state import attach_track_state, batch_track_state, consistency_snapshot
 from validators import summarize_points, validate_probe_online, validate_temp_point
 
 router = APIRouter(tags=["batches"])
@@ -45,12 +46,10 @@ def list_batches(authorization: AuthHeader = None, status: str | None = None):
                    JOIN probes p ON p.id=b.probe_id
                    ORDER BY b.id DESC"""
             ).fetchall()
-        items = []
-        for r in rows:
-            d = dict(r)
+        items = attach_track_state(conn, rows)
+        for d in items:
             d["temp_points"] = json.loads(d["temp_points"] or "[]")
-            items.append(d)
-        return {"items": items}
+        return {"items": items, "track": consistency_snapshot(conn, "batches")}
 
 
 @router.get("/api/batches/{batch_id}")
@@ -78,6 +77,7 @@ def get_batch(batch_id: int, authorization: AuthHeader = None):
         ).fetchall()
         return {
             "batch": data,
+            "state": batch_track_state(conn, row),
             "excursions": [dict(e) for e in exc],
             "seals": [dict(s) for s in seals],
         }

@@ -1,6 +1,7 @@
 export const routesViewTemplate = `
 <section class="panel">
   <h2>冷链线路</h2>
+  <p class="hint" v-if="trackSummary.consistency_token">同态票 <span class="mono">{{ trackSummary.consistency_token }}</span> · 正式封批 {{ trackSummary.official_sealed || 0 }} · 影子 {{ trackSummary.shadow_sealed || 0 }} · 解冻待提交 {{ trackSummary.thaw_pending || 0 }} · <span :class="trackSummary.inconsistent ? 'bad' : 'ok'">{{ trackSummary.inconsistent ? "两轨异态" : "两轨一致" }}</span></p>
   <div class="form-row">
     <div><label>线路编码</label><input v-model="routeForm.route_code"/></div>
     <div><label>起点区域</label><input v-model="routeForm.origin_region"/></div>

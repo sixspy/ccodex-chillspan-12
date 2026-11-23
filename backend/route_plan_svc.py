@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from models import RouteIn
+from track_state import consistency_snapshot
 
 router = APIRouter(tags=["routes"])
 
@@ -17,7 +18,10 @@ def list_routes(authorization: AuthHeader = None):
         rows = conn.execute(
             "SELECT * FROM route_plans ORDER BY id"
         ).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        return {
+            "items": [dict(r) for r in rows],
+            "track": consistency_snapshot(conn, "routes"),
+        }
 
 
 @router.get("/api/routes/{route_id}")

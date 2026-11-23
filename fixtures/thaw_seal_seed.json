@@ -1,0 +1,19 @@
+[
+  {
+    "batch_code": "TB-CK-HN-03-090",
+    "chamber_code": "CK-HN-03",
+    "probe_code": "PR-HN-C2",
+    "cargo_ref": "解冻空桩影子货载",
+    "generation": 1,
+    "status": "已封批",
+    "temp_points": [{"t": "14:00", "c": 4.1}, {"t": "15:00", "c": 4.3}],
+    "min_observed": 4.1,
+    "max_observed": 4.3,
+    "created_at": "2026-11-21T14:00:00",
+    "sealed_at": "2026-11-21T16:40:00",
+    "seal_snapshot": false,
+    "thaw_pending": true,
+    "thaw_minutes": 35,
+    "thaw_mode": "卸货口"
+  }
+]

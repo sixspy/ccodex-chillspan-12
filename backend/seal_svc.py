@@ -9,6 +9,7 @@ from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from locks import release, require_lock
 from models import SealIn
+from track_state import attach_track_state, consistency_snapshot, thaw_pending_count
 from validators import require_calibration_fresh, validate_batch_sealable
 
 router = APIRouter(tags=["seal"])
@@ -22,7 +23,10 @@ def list_seals(authorization: AuthHeader = None):
             """SELECT s.*, b.batch_code FROM seal_snapshots s
                JOIN temp_batches b ON b.id=s.batch_id ORDER BY s.id DESC"""
         ).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        return {
+            "items": attach_track_state(conn, rows),
+            "track": consistency_snapshot(conn, "seal"),
+        }
 
 
 @router.post("/api/seals")
@@ -49,6 +53,17 @@ def seal_batch(body: SealIn, authorization: AuthHeader = None):
             bdict["temp_points"] = batch["temp_points"]
             validate_batch_sealable(bdict, open_exc)
             require_calibration_fresh(batch)
+            pending_thaw = thaw_pending_count(conn, body.batch_id)
+            if pending_thaw:
+                write_audit(
+                    conn,
+                    user,
+                    "封批偏航",
+                    batch["batch_code"],
+                    {"reason": "解冻待提交", "pending": pending_thaw, "verdict": "拒写"},
+                )
+                conn.commit()
+                raise HTTPException(409, "存在待提交解冻事件，解冻轨未结不得封批")
             gen = int(batch["generation"])
             manifest = body.manifest or json.dumps(
                 {
@@ -84,6 +99,7 @@ def seal_batch(body: SealIn, authorization: AuthHeader = None):
                 "batch_code": batch["batch_code"],
                 "generation": gen + 1,
                 "status": "已封批",
+                "track": "封批轨",
             }
         finally:
             release(conn, lock_key, user)

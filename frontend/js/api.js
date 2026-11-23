@@ -75,5 +75,6 @@ export function createApi(getToken, onUnauthorized) {
       req("/api/carrier-ingest-stub", { method: "POST", body: JSON.stringify(data) }),
     thawJobs: () => req("/api/thaw/jobs"),
     thawStub: (data) => req("/api/thaw-stub", { method: "POST", body: JSON.stringify(data) }),
+    trackState: () => req("/api/track/state"),
   };
 }

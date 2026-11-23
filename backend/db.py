@@ -398,6 +398,53 @@ def seed_lineage_samples(conn: sqlite3.Connection) -> None:
     )
 
 
+def seed_thaw_seal_fixture(conn: sqlite3.Connection) -> None:
+    """种子夹具：解冻空桩仍能改封批态的复现 —— 批次表喊已封、封批表零快照、挂解冻待提交。"""
+    for row in _load_json("thaw_seal_seed.json"):
+        if conn.execute(
+            "SELECT id FROM temp_batches WHERE batch_code=?", (row["batch_code"],)
+        ).fetchone():
+            continue
+        ch = _chamber_id(conn, row["chamber_code"])
+        probe = conn.execute(
+            "SELECT id FROM probes WHERE probe_code=?", (row["probe_code"],)
+        ).fetchone()
+        if not ch or not probe:
+            continue
+        points = row.get("temp_points", [])
+        cur = conn.execute(
+            """INSERT INTO temp_batches(batch_code,chamber_id,probe_id,cargo_ref,
+               temp_points,generation,status,min_observed,max_observed,created_at,sealed_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                row["batch_code"],
+                ch,
+                probe["id"],
+                row.get("cargo_ref", "解冻空桩夹具"),
+                json.dumps(points, ensure_ascii=False),
+                int(row.get("generation", 1)),
+                row.get("status", "已封批"),
+                row.get("min_observed"),
+                row.get("max_observed"),
+                row.get("created_at", now_iso()),
+                row.get("sealed_at"),
+            ),
+        )
+        if row.get("thaw_pending"):
+            conn.execute(
+                """INSERT INTO thaw_event_jobs(batch_id,thaw_minutes,mode,status,detail,created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    cur.lastrowid,
+                    int(row.get("thaw_minutes", 15)),
+                    row.get("thaw_mode", "解冻登记"),
+                    "待提交",
+                    "影子封批态未晋升；解冻轨待提交",
+                    row.get("created_at", now_iso()),
+                ),
+            )
+
+
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
@@ -409,19 +456,24 @@ def init_db() -> None:
         seed_calibrations(conn)
         seed_routes(conn)
         seed_lineage_samples(conn)
+        seed_thaw_seal_fixture(conn)
         conn.commit()
 
 
 def dashboard_stats(conn: sqlite3.Connection) -> dict:
+    from track_state import batch_track_state
+
     chambers = conn.execute("SELECT COUNT(*) c FROM cold_chambers").fetchone()["c"]
     probes = conn.execute("SELECT COUNT(*) c FROM probes").fetchone()["c"]
-    batches = conn.execute("SELECT COUNT(*) c FROM temp_batches").fetchone()["c"]
+    batch_rows = conn.execute("SELECT * FROM temp_batches").fetchall()
+    batches = len(batch_rows)
     open_exc = conn.execute(
         "SELECT COUNT(*) c FROM excursion_cursors WHERE status='开放'"
     ).fetchone()["c"]
-    sealed = conn.execute(
-        "SELECT COUNT(*) c FROM temp_batches WHERE status='已封批'"
-    ).fetchone()["c"]
+    states = [batch_track_state(conn, row) for row in batch_rows]
+    # 已封批只认正式封批快照；影子封批另计，不入已封批。
+    sealed = sum(1 for s in states if s["official_sealed"])
+    shadow_sealed = sum(1 for s in states if s["shadow_sealed"])
     exports = conn.execute(
         "SELECT COUNT(*) c FROM spectrum_exports WHERE status='已导出'"
     ).fetchone()["c"]
@@ -443,6 +495,8 @@ def dashboard_stats(conn: sqlite3.Connection) -> dict:
         "batches": batches,
         "open_excursions": open_exc,
         "sealed_batches": sealed,
+        "shadow_sealed_batches": shadow_sealed,
+        "inconsistent_batches": sum(1 for s in states if not s["consistent"]),
         "spectrum_exports": exports,
         "calibration_overdue": overdue,
         "stubs": stubs,

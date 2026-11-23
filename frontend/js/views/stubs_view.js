@@ -1,7 +1,7 @@
 export const stubsViewTemplate = `
 <section class="panel">
   <h2>空桩台</h2>
-  <p class="hint">承运商导入与解冻事件仅登记任务表，不改批次主表。</p>
+  <p class="hint">解冻事件只落解冻轨（任务表）；封批正式字段零改，封批轨批次一律拒收，同批提交须抢封批锁。</p>
   <div class="grid-2">
     <div>
       <h3>承运商导入空桩</h3>
@@ -19,7 +19,15 @@ export const stubsViewTemplate = `
         <div><label>分钟</label><input type="number" v-model.number="thawForm.thaw_minutes"/></div>
       </div>
       <button @click="doThawStub">登记解冻</button>
-      <ul><li v-for="j in thawJobs" :key="j.id">批次 {{ j.batch_id }} {{ j.thaw_minutes }}分 · {{ j.status }}</li></ul>
+      <ul>
+        <li v-for="j in thawJobs" :key="j.id">
+          批次 {{ j.batch_id }} {{ j.thaw_minutes }}分 · 解冻轨 {{ j.status }}
+          <span v-if="j.state">
+            · 封批轨 {{ j.state.seal_track }}
+            <span class="badge" :class="j.state.consistent ? 'pass' : 'fail'">{{ trackBadge(j) }}</span>
+          </span>
+        </li>
+      </ul>
     </div>
   </div>
 </section>

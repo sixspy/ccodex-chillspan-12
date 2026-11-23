@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
 from models import SpectrumIn
+from track_state import attach_track_state, batch_track_state, consistency_snapshot
 
 router = APIRouter(tags=["spectrum"])
 
@@ -21,7 +22,10 @@ def list_exports(authorization: AuthHeader = None):
             """SELECT s.*, b.batch_code FROM spectrum_exports s
                JOIN temp_batches b ON b.id=s.batch_id ORDER BY s.id DESC"""
         ).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        return {
+            "items": attach_track_state(conn, rows),
+            "track": consistency_snapshot(conn, "spectrum"),
+        }
 
 
 @router.post("/api/spectrum/export")
@@ -33,8 +37,9 @@ def export_spectrum(body: SpectrumIn, authorization: AuthHeader = None):
         ).fetchone()
         if not batch:
             raise HTTPException(404, "批次不存在")
-        if batch["status"] != "已封批":
-            raise HTTPException(409, "须先封批再导出温谱")
+        state = batch_track_state(conn, batch)
+        if batch["status"] != "已封批" or not state["official_sealed"]:
+            raise HTTPException(409, "须正式封批（有同代封批快照）再导出温谱")
         points = json.loads(batch["temp_points"] or "[]")
         payload = json.dumps(
             {
